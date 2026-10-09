@@ -28,24 +28,53 @@ jobs:
   build:
     name: Build AppImage 🧱
     runs-on: ubuntu-26.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: '1'
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
           persist-credentials: false
 
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      # Caches are restored on every run and saved even when a later step fails, so a
+      # red build still leaves its compiled objects behind for the next attempt.
+      # Keys carry the run id (caches are immutable); restore-keys pick the newest.
+      - name: Restore ccache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: ${{ github.workspace }}/.ccache
-          key: appimage-ccache-${{ github.sha }}
-          restore-keys: appimage-ccache-
+          path: .ccache
+          key: ccache-appimage-${{ github.run_id }}
+          restore-keys: ccache-appimage-
+
+      - name: Restore cargo
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build_ubuntu/cargo
+          key: cargo-appimage-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
+          restore-keys: |
+            cargo-appimage-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+            cargo-appimage-
+
+      - name: Restore apt packages
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .apt-cache
+          key: apt-appimage-${{ hashFiles('.github/workflows/appimage.yaml') }}-${{ github.run_id }}
+          restore-keys: apt-appimage-${{ hashFiles('.github/workflows/appimage.yaml') }}-
 
       - name: Install build dependencies 🛍️
         run: |
           sudo apt-get update
+          mkdir -p .apt-cache/partial
           # Same set as .github/scripts/utils.zsh/setup_ubuntu, minus CEF/VLC/Python
           # (not shipped in the AppImage), plus tools for packaging.
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get install -y --no-install-recommends -o Dir::Cache::archives="$PWD/.apt-cache" \
             build-essential cmake ninja-build ccache pkg-config git curl ca-certificates \
             patchelf desktop-file-utils file squashfs-tools zsync \
             libglib2.0-dev extra-cmake-modules libcurl4-openssl-dev \
@@ -63,6 +92,7 @@ jobs:
             qt6-base-dev qt6-base-private-dev libqt6svg6-dev qt6-wayland \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
             libxcb-shape0 libxcb-xkb1 libxcb-sync1 libxcb-xinerama0
+          sudo chown -R "$(id -u):$(id -g)" .apt-cache # apt ran as root; the cache action must read it
 
       - name: Determine version 🏷️
         run: |
@@ -75,7 +105,6 @@ jobs:
 
       - name: Configure 🔧
         env:
-          CCACHE_DIR: ${{ github.workspace }}/.ccache
           RUST_LIBOBS: ${{ github.event_name != 'workflow_dispatch' || inputs.rust_libobs }}
         run: |
           cmake --preset ubuntu-ci \
@@ -90,9 +119,33 @@ jobs:
             -DENABLE_SCRIPTING_PYTHON=OFF
 
       - name: Build 🧱
-        env:
-          CCACHE_DIR: ${{ github.workspace }}/.ccache
-        run: cmake --build build_ubuntu
+        run: |
+          cmake --build build_ubuntu
+          ccache -s
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .ccache
+          key: ccache-appimage-${{ github.run_id }}
+
+      - name: Save cargo
+        if: always()
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build_ubuntu/cargo
+          key: cargo-appimage-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ github.run_id }}
+
+      - name: Save apt packages
+        if: always()
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .apt-cache
+          key: apt-appimage-${{ hashFiles('.github/workflows/appimage.yaml') }}-${{ github.run_id }}
 
       - name: Assemble AppDir 📁
         run: |
@@ -134,12 +187,34 @@ jobs:
         with:
           name: obs-studio-appimage
 
+      # Package downloads of the test infrastructure (X server, Mesa, ...) are cached per image.
+      - name: Restore test-infrastructure packages
+        id: pkgcache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: pkgcache
+          key: testpkgs-${{ matrix.image }}-${{ hashFiles('build-aux/appimage/test-appimage.sh') }}
+
       - name: Run the AppImage in a stock container 🐳
         run: |
-          mkdir -p results
+          mkdir -p results pkgcache/apt pkgcache/lists pkgcache/dnf
           docker run --rm --cap-add SYS_PTRACE \
+            -v "$PWD/pkgcache/apt:/var/cache/apt/archives" \
+            -v "$PWD/pkgcache/lists:/var/lib/apt/lists" \
+            -v "$PWD/pkgcache/dnf:/var/cache/libdnf5" \
             -v "$PWD:/work" -w /work "${{ matrix.image }}" \
             bash -c 'build-aux/appimage/test-appimage.sh OBS_Studio-*-x86_64.AppImage results'
+
+      - name: Fix cache ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" pkgcache
+
+      - name: Save test-infrastructure packages
+        if: always() && steps.pkgcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: pkgcache
+          key: testpkgs-${{ matrix.image }}-${{ hashFiles('build-aux/appimage/test-appimage.sh') }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

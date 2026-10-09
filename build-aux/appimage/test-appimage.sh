@@ -20,13 +20,17 @@ echo "::group::Install test infrastructure"
 case "${ID_LIKE:-} ${ID}" in
 *debian* | *ubuntu*)
     export DEBIAN_FRONTEND=noninteractive
+    # Keep downloaded .debs (the images delete them) so the CI package cache works.
+    rm -f /etc/apt/apt.conf.d/docker-clean
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true"; APT::Keep-Downloaded-Packages "true";' \
+        >/etc/apt/apt.conf.d/99keep
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends \
         ca-certificates xvfb icewm x11-utils imagemagick fonts-dejavu-core gdb procps \
         libgl1-mesa-dri libglx-mesa0 libegl-mesa0 >/dev/null
     ;;
 *fedora* | *rhel*)
-    dnf install -y -q --setopt=install_weak_deps=False \
+    dnf install -y -q --setopt=install_weak_deps=False --setopt=keepcache=1 \
         xorg-x11-server-Xvfb icewm xwininfo ImageMagick \
         dejavu-sans-fonts gdb procps-ng mesa-dri-drivers mesa-libGL mesa-libEGL >/dev/null
     ;;
