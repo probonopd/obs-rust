@@ -1,0 +1,52 @@
+#!/bin/sh
+# AppRun for the OBS Studio (obs-rust) AppImage.
+#
+# The AppImage ships its own glibc, so every executable in it has its ELF
+# interpreter patched to @LOADER@ (a fixed path chosen at build time; the
+# kernel cannot expand variables there). This script makes sure a copy of the
+# bundled dynamic loader exists at that path before starting OBS. Keeping the
+# kernel in charge of the loader (instead of running `ld.so obs`) keeps
+# /proc/self/exe pointing at the real binary, which OBS uses to find its data
+# and plugins, and it makes helper processes (obs-ffmpeg-mux, ...) work too.
+HERE="$(dirname "$(readlink -f "$0")")"
+LOADER="@LOADER@"
+LOADER_DIR="$(dirname "$LOADER")"
+BUNDLED_LOADER="$HERE/lib64/ld-linux-x86-64.so.2"
+
+if ! cmp -s "$BUNDLED_LOADER" "$LOADER" 2>/dev/null; then
+    umask 022
+    mkdir -p "$LOADER_DIR" 2>/dev/null
+    tmp="$(mktemp "$LOADER_DIR/.ld.XXXXXX" 2>/dev/null)" &&
+        cp "$BUNDLED_LOADER" "$tmp" && chmod 755 "$tmp" &&
+        mv -f "$tmp" "$LOADER"
+fi
+# Never trust a loader directory someone else owns: it is executed as the
+# interpreter of every process we start.
+if ! cmp -s "$BUNDLED_LOADER" "$LOADER" 2>/dev/null ||
+    { [ "$(stat -c %u "$LOADER_DIR")" != "$(id -u)" ] && [ "$(stat -c %u "$LOADER_DIR")" != 0 ]; } ||
+    [ -n "$(find "$LOADER_DIR" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+    echo "obs AppImage: cannot set up the bundled loader in $LOADER_DIR" >&2
+    echo "(the directory must be writable by you only and /tmp must allow exec)" >&2
+    exit 1
+fi
+
+export APPDIR="$HERE"
+export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export QT_PLUGIN_PATH="$HERE/usr/lib/qt6/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$HERE/usr/lib/qt6/plugins/platforms"
+export GCONV_PATH="$HERE/usr/lib/gconv"
+export XDG_DATA_DIRS="$HERE/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export SPA_PLUGIN_DIR="$HERE/usr/lib/spa-0.2"
+export PIPEWIRE_MODULE_DIR="$HERE/usr/lib/pipewire-0.3"
+export PIPEWIRE_CONFIG_DIR="$HERE/usr/share/pipewire"
+# Host certificate bundles live in different places per distribution.
+if [ -z "$SSL_CERT_FILE" ]; then
+    for f in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt \
+        /etc/ssl/ca-bundle.pem /etc/ssl/cert.pem; do
+        [ -r "$f" ] && { export SSL_CERT_FILE="$f"; break; }
+    done
+fi
+# The host's Qt/GTK platform theme plugins are linked against the host's Qt.
+unset QT_QPA_PLATFORMTHEME
+
+exec "$HERE/usr/bin/obs" "$@"
