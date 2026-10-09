@@ -69,12 +69,16 @@ jobs:
           restore-keys: apt-appimage-${{ hashFiles('.github/workflows/appimage.yaml') }}-
 
       - name: Install build dependencies 🛍️
+        timeout-minutes: 10 # a hang here must fail with logs rather than sit for hours
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_SUSPEND: '1' # never restart runner services in the middle of the install
         run: |
           sudo apt-get update
           mkdir -p .apt-cache/partial
           # Same set as .github/scripts/utils.zsh/setup_ubuntu, minus CEF/VLC/Python
           # (not shipped in the AppImage), plus tools for packaging.
-          sudo apt-get install -y --no-install-recommends -o Dir::Cache::archives="$PWD/.apt-cache" \
+          sudo -E apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=120 -o Dir::Cache::archives="$PWD/.apt-cache" \
             build-essential cmake ninja-build ccache pkg-config git curl ca-certificates \
             patchelf desktop-file-utils file squashfs-tools zsync \
             libglib2.0-dev extra-cmake-modules libcurl4-openssl-dev \
