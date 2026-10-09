@@ -73,7 +73,7 @@ WM_PID=$!
 sleep 2
 
 export HOME="$PWD/home"
-mkdir -p "$HOME/.config" # OBS only creates one directory level below it
+mkdir -p "$HOME/.config/obs-studio" # OBS only creates one directory level at a time
 export QT_QPA_PLATFORM=xcb
 export QT_ACCESSIBILITY=0
 export DBUS_SESSION_BUS_ADDRESS=disabled:
@@ -88,7 +88,9 @@ for _ in $(seq 1 15); do
     sleep 2
     kill -0 "$APP_PID" 2>/dev/null || break
     # A real window owned by OBS (not just the window manager's own chrome).
-    if xwininfo -tree -root 2>/dev/null | grep -qE '"OBS [0-9]|"obs"'; then
+    # (capture first: `grep -q` closing the pipe early fails the pipeline under pipefail)
+    WINDOWS="$(xwininfo -tree -root 2>/dev/null || true)"
+    if grep -qE '"OBS [0-9]|"obs"' <<<"$WINDOWS"; then
         WINDOW_FOUND=1
         import -window root "$OUT/screenshot.png"
         STDDEV="$(identify -format '%[fx:standard_deviation]' "$OUT/screenshot.png")"
@@ -105,7 +107,7 @@ xwininfo -tree -root 2>&1 | head -40 || true
 if kill -0 "$APP_PID" 2>/dev/null; then
     # Libraries actually mapped into the running process: the core stack must be bundled.
     echo "Libraries mapped from outside the AppImage:"
-    grep -o '/[^ ]*\.so[^ ]*' "/proc/$APP_PID/maps" | sort -u | grep -v "$APPDIR" || true
+    grep -o '/[^ ]*\.so[^ ]*' "/proc/$APP_PID/maps" | sort -u | grep -v "$APPDIR" | grep -v '/tmp/.obs-rust-appimage-' || true
     MISSING=0
     for lib in libc.so.6 libstdc++.so.6 libQt6Core.so libQt6Widgets.so libavcodec.so libobs.so libX11.so libxcb.so; do
         if ! grep -o '/[^ ]*' "/proc/$APP_PID/maps" | grep "/$lib" | grep -q "$APPDIR"; then
@@ -119,7 +121,7 @@ else
 fi
 echo "::endgroup::"
 
-LOG="$(find "$HOME/.config/obs-studio/logs" -type f 2>/dev/null | sort | tail -1 || true)"
+LOG="$(ls -1 "$HOME"/.config/obs-studio/logs/* 2>/dev/null | tail -1 || true)"
 if [ -n "$LOG" ]; then
     cp "$LOG" "$OUT/obs.log"
     echo "::group::OBS log"

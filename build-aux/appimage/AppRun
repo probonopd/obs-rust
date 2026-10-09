@@ -13,18 +13,26 @@ LOADER="@LOADER@"
 LOADER_DIR="$(dirname "$LOADER")"
 BUNDLED_LOADER="$HERE/lib64/ld-linux-x86-64.so.2"
 
-if ! cmp -s "$BUNDLED_LOADER" "$LOADER" 2>/dev/null; then
+# Only coreutils here: minimal containers lack cmp, find, ...
+same_loader() {
+    [ -f "$LOADER" ] && [ "$(sha256sum <"$BUNDLED_LOADER")" = "$(sha256sum <"$LOADER")" ]
+}
+if ! same_loader; then
     umask 022
     mkdir -p "$LOADER_DIR" 2>/dev/null
     tmp="$(mktemp "$LOADER_DIR/.ld.XXXXXX" 2>/dev/null)" &&
         cp "$BUNDLED_LOADER" "$tmp" && chmod 755 "$tmp" &&
         mv -f "$tmp" "$LOADER"
 fi
-# Never trust a loader directory someone else owns: it is executed as the
-# interpreter of every process we start.
-if ! cmp -s "$BUNDLED_LOADER" "$LOADER" 2>/dev/null ||
-    { [ "$(stat -c %u "$LOADER_DIR")" != "$(id -u)" ] && [ "$(stat -c %u "$LOADER_DIR")" != 0 ]; } ||
-    [ -n "$(find "$LOADER_DIR" -maxdepth 0 -perm /022 2>/dev/null)" ]; then
+# Never trust a loader directory someone else owns or can write to: it is
+# executed as the interpreter of every process we start.
+owner="$(stat -c %u "$LOADER_DIR" 2>/dev/null)"
+mode="$(stat -c %a "$LOADER_DIR" 2>/dev/null)"
+case "$mode" in
+*[2367]? | *[2367]) writable=1 ;;
+*) writable=0 ;;
+esac
+if ! same_loader || [ "$writable" = 1 ] || { [ "$owner" != "$(id -u)" ] && [ "$owner" != 0 ]; }; then
     echo "obs AppImage: cannot set up the bundled loader in $LOADER_DIR" >&2
     echo "(the directory must be writable by you only and /tmp must allow exec)" >&2
     exit 1
