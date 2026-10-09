@@ -32,7 +32,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
-          fetch-depth: 0 # the version is derived from git tags
           persist-credentials: false
 
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -65,6 +64,15 @@ jobs:
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
             libxcb-shape0 libxcb-xkb1 libxcb-sync1 libxcb-xinerama0
 
+      - name: Determine version 🏷️
+        run: |
+          # OBS's CMake wants MAJOR.MINOR.PATCH; forks often have no tags at all.
+          if [[ "${GITHUB_REF_TYPE}" == tag && "${GITHUB_REF_NAME#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "OBS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "OBS_VERSION=0.0.0-g${GITHUB_SHA::9}" >> "$GITHUB_ENV"
+          fi
+
       - name: Configure 🔧
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -75,6 +83,7 @@ jobs:
             -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DCMAKE_INSTALL_LIBDIR=lib \
+            -DOBS_VERSION_OVERRIDE="${OBS_VERSION}" \
             -DENABLE_RELOCATABLE=ON \
             -DENABLE_RUST_LIBOBS="${RUST_LIBOBS^^}" \
             -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF -DENABLE_WEBRTC=OFF -DENABLE_AJA=OFF \
@@ -96,8 +105,7 @@ jobs:
           curl -fsSLo appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           ./appimagetool --appimage-extract >/dev/null
-          VERSION="$(git describe --tags --always 2>/dev/null || echo "${GITHUB_SHA::9}")"
-          ARCH=x86_64 squashfs-root/AppRun --no-appstream AppDir "OBS_Studio-${VERSION}-x86_64.AppImage"
+          ARCH=x86_64 squashfs-root/AppRun --no-appstream AppDir "OBS_Studio-${OBS_VERSION}-x86_64.AppImage"
           ls -lh *.AppImage
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
