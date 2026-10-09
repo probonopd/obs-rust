@@ -27,7 +27,7 @@ case "${ID_LIKE:-} ${ID}" in
     ;;
 *fedora* | *rhel*)
     dnf install -y -q --setopt=install_weak_deps=False \
-        ca-certificates xorg-x11-server-Xvfb icewm xorg-x11-utils ImageMagick \
+        xorg-x11-server-Xvfb icewm xwininfo ImageMagick \
         dejavu-sans-fonts gdb procps-ng mesa-dri-drivers mesa-libGL mesa-libEGL >/dev/null
     ;;
 *)
@@ -69,7 +69,7 @@ WM_PID=$!
 sleep 2
 
 export HOME="$PWD/home"
-mkdir -p "$HOME"
+mkdir -p "$HOME/.config" # OBS only creates one directory level below it
 export QT_QPA_PLATFORM=xcb
 export QT_ACCESSIBILITY=0
 export DBUS_SESSION_BUS_ADDRESS=disabled:
@@ -84,7 +84,7 @@ for _ in $(seq 1 15); do
     sleep 2
     kill -0 "$APP_PID" 2>/dev/null || break
     # A real window owned by OBS (not just the window manager's own chrome).
-    if xwininfo -tree -root 2>/dev/null | grep -qi '"obs"'; then
+    if xwininfo -tree -root 2>/dev/null | grep -qE '"OBS [0-9]|"obs"'; then
         WINDOW_FOUND=1
         import -window root "$OUT/screenshot.png"
         STDDEV="$(identify -format '%[fx:standard_deviation]' "$OUT/screenshot.png")"
