@@ -19,6 +19,10 @@ on:
         description: Build libobs with the Rust ports (ENABLE_RUST_LIBOBS)
         type: boolean
         default: true
+      qsv:
+        description: Include the Intel QSV plugin (probes the Intel GPU through the host's libvpl runtime at startup; off until verified on real hardware)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -110,6 +114,7 @@ jobs:
       - name: Configure 🔧
         env:
           RUST_LIBOBS: ${{ github.event_name != 'workflow_dispatch' || inputs.rust_libobs }}
+          QSV: ${{ github.event_name == 'workflow_dispatch' && inputs.qsv }}
         run: |
           cmake --preset ubuntu-ci \
             -DCMAKE_BUILD_TYPE=Release \
@@ -119,6 +124,7 @@ jobs:
             -DOBS_VERSION_OVERRIDE="${OBS_VERSION}" \
             -DENABLE_RELOCATABLE=ON \
             -DENABLE_RUST_LIBOBS="${RUST_LIBOBS^^}" \
+            -DENABLE_QSV11="${QSV^^}" \
             -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF -DENABLE_WEBRTC=OFF -DENABLE_AJA=OFF \
             -DENABLE_SCRIPTING_PYTHON=OFF
 

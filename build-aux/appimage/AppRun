@@ -78,4 +78,56 @@ if [ -n "$OBS_APPIMAGE_DEBUG" ]; then
     echo "gdb not found; install it to get a backtrace" >&2
 fi
 
-exec "$HERE/usr/bin/obs" "$@"
+# Run OBS as a child (not exec) so that a crash can be reported instead of
+# vanishing as a bare "exited with status 11" from the desktop's launcher.
+started="$(date +%s)"
+"$HERE/usr/bin/obs" "$@" &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null' TERM INT HUP
+wait "$child"
+rc=$?
+while kill -0 "$child" 2>/dev/null; do wait "$child"; rc=$?; done
+trap - TERM INT HUP
+
+case "$rc" in
+132 | 134 | 135 | 136 | 139)
+    sig="$(kill -l $((rc - 128)))"
+    report="${XDG_CACHE_HOME:-$HOME/.cache}/obs-studio-appimage-crash.txt"
+    mkdir -p "$(dirname "$report")" 2>/dev/null
+    {
+        echo "OBS Studio AppImage crashed with SIG$sig (exit status $rc) at $(date)"
+        echo "after $(($(date +%s) - started)) seconds"
+        echo
+        echo "== system =="
+        uname -a
+        grep -E '^(PRETTY_NAME|ID)=' /etc/os-release 2>/dev/null
+        echo "session: ${XDG_SESSION_TYPE:-?} DISPLAY=${DISPLAY:-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}"
+        echo "/dev/dri: $(ls /dev/dri 2>/dev/null | tr '\n' ' ')"
+        echo
+        echo "== bundled loader =="
+        echo "$LOADER"
+        echo
+        echo "== relevant environment =="
+        env | grep -E '^(LD_|LIBVA|LIBGL|MESA|EGL|__GL|QT_|GIO_|GSETTINGS|XDG_SESSION|LANG|LC_)' | sort
+        echo
+        echo "== last lines of the newest OBS log (it is buffered, so it may be short) =="
+        log="$(ls -1t "${XDG_CONFIG_HOME:-$HOME/.config}"/obs-studio/logs/* 2>/dev/null | head -1)"
+        echo "$log"
+        [ -n "$log" ] && tail -n 60 "$log"
+    } >"$report" 2>&1
+    echo "OBS crashed (SIG$sig). A report was saved to: $report" >&2
+    # A crash right after start is reproducible: run OBS once more under gdb and
+    # add the backtrace to the report. (If it starts fine this time, it just runs.)
+    if [ $(($(date +%s) - started)) -lt 120 ] && command -v gdb >/dev/null 2>&1; then
+        echo "Restarting OBS under gdb to capture a backtrace..." >&2
+        gdb -q -batch -ex 'set pagination off' -ex 'handle SIGPIPE nostop noprint' -ex run \
+            -ex 'echo \n== backtrace ==\n' -ex bt -ex 'thread apply all bt 30' -ex 'info sharedlibrary' \
+            --args "$HERE/usr/bin/obs" "$@" >>"$report" 2>&1 </dev/null
+        rc=$?
+        echo "A backtrace (if it crashed again) was added to: $report" >&2
+    else
+        echo "Install gdb and start again to get a backtrace, or run with OBS_APPIMAGE_DEBUG=1" >&2
+    fi
+    ;;
+esac
+exit "$rc"
