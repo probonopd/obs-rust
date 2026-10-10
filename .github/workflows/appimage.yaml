@@ -97,7 +97,7 @@ jobs:
             libsndio-dev libspeexdsp-dev libudev-dev libv4l-dev libva-dev libpci-dev libdrm-dev \
             nlohmann-json3-dev libwebsocketpp-dev libasio-dev libqrcodegencpp-dev \
             libffmpeg-nvenc-dev librist-dev libsrt-openssl-dev libvpl-dev libvpl2 \
-            qt6-base-dev qt6-base-private-dev libqt6svg6-dev qt6-wayland \
+            qt6-base-dev qt6-base-private-dev libqt6svg6-dev qt6-svg-plugins qt6-wayland \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
             libxcb-shape0 libxcb-xkb1 libxcb-sync1 libxcb-xinerama0
           sudo chown -R "$(id -u):$(id -g)" .apt-cache # apt ran as root; the cache action must read it

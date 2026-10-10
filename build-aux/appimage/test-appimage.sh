@@ -30,7 +30,11 @@ case "${ID_LIKE:-} ${ID}" in
         libgl1-mesa-dri libglx-mesa0 libegl-mesa0 >/dev/null
     # HOSTILE_QT=1: a host that has its own, different Qt plugins - the usual desktop - which
     # a bundled Qt must not load (this crashed OBS in QIcon via the host's libqsvgicon.so).
-    [ -n "${HOSTILE_QT:-}" ] && apt-get install -y -qq --no-install-recommends libqt6svg6 >/dev/null
+    if [ -n "${HOSTILE_QT:-}" ]; then
+        # (the plugins live in libqt6svg6 on older releases, in qt6-svg-plugins on newer ones)
+        apt-get install -y -qq --no-install-recommends libqt6svg6 qt6-svg-plugins >/dev/null ||
+            apt-get install -y -qq --no-install-recommends libqt6svg6 >/dev/null
+    fi
     ;;
 *fedora* | *rhel*)
     dnf install -y -q --setopt=install_weak_deps=False --setopt=keepcache=1 \
