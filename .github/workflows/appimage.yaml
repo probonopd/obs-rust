@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - 'claude/**' # TEMPORARY: remove before finishing
     tags:
       - '*'
     paths-ignore:
@@ -208,6 +209,7 @@ jobs:
         run: |
           mkdir -p results pkgcache/apt pkgcache/lists pkgcache/dnf
           docker run --rm --cap-add SYS_PTRACE \
+            ${{ matrix.image == 'debian:trixie-slim' && '-e HOSTILE_QT=1' || '' }} \
             -v "$PWD/pkgcache/apt:/var/cache/apt/archives" \
             -v "$PWD/pkgcache/lists:/var/lib/apt/lists" \
             -v "$PWD/pkgcache/dnf:/var/cache/libdnf5" \

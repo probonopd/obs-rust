@@ -17,13 +17,34 @@ EXCLUDE='^(linux-vdso|libcuda|libnvidia|libnvcuvid|libGLX_.*|libEGL_.*|libgalliu
 mkdir -p "$LIBDIR" "$APPDIR/lib64"
 
 # --- Qt plugins -------------------------------------------------------------
+# Qt must load plugins from the bundle only (qt.conf below). A plugin that is not
+# bundled is not "found on the host instead": it is silently missing, or - worse, when
+# the host's Qt differs - loaded from the host and crashing (QIcon -> libqsvgicon.so).
 QT_PLUGINS="$SYSLIB/qt6/plugins"
+[ -d "$QT_PLUGINS" ] || QT_PLUGINS="$(dirname "$(find /usr/lib /usr/lib64 -path '*/qt6/plugins/platforms/libqxcb.so' 2>/dev/null | head -1)")/.."
+echo "Qt plugins from: $(realpath "$QT_PLUGINS")"
 mkdir -p "$LIBDIR/qt6/plugins"
-for d in platforms platforminputcontexts imageformats iconengines tls xcbglintegrations \
-    wayland-decoration-client wayland-graphics-integration-client wayland-shell-integration \
-    styles; do
+for d in platforms platforminputcontexts platformthemes imageformats iconengines styles generic \
+    networkinformation tls xcbglintegrations egldeviceintegrations \
+    wayland-decoration-client wayland-graphics-integration-client wayland-shell-integration; do
     [ -d "$QT_PLUGINS/$d" ] && cp -a "$QT_PLUGINS/$d" "$LIBDIR/qt6/plugins/"
 done
+# The ones OBS cannot live without (SVG icons/themes, X11). Search the whole system if
+# the package put them somewhere unexpected, and fail the build if they do not exist.
+for need in platforms/libqxcb.so imageformats/libqsvg.so iconengines/libqsvgicon.so; do
+    if [ ! -e "$LIBDIR/qt6/plugins/$need" ]; then
+        found="$(find /usr/lib /usr/lib64 -path "*/$need" 2>/dev/null | head -1)"
+        if [ -n "$found" ]; then
+            mkdir -p "$LIBDIR/qt6/plugins/$(dirname "$need")"
+            cp -aL "$found" "$LIBDIR/qt6/plugins/$need"
+        else
+            echo "::error::Qt plugin $need not found; without it OBS has no SVG icons or loads the host's copy" >&2
+            dpkg -L libqt6svg6 2>/dev/null | grep -i plugin >&2 || true
+            exit 1
+        fi
+    fi
+done
+find "$LIBDIR/qt6/plugins" -name '*.so' | sed "s|$LIBDIR/||" | sort
 
 # Qt must only ever look at the bundled plugins (see AppRun).
 printf '[Paths]\nPrefix = ..\nPlugins = lib/qt6/plugins\n' >"$APPDIR/usr/bin/qt.conf"

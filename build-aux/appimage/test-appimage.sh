@@ -28,6 +28,9 @@ case "${ID_LIKE:-} ${ID}" in
     apt-get install -y -qq --no-install-recommends \
         ca-certificates xvfb icewm x11-utils imagemagick fonts-dejavu-core gdb procps dbus \
         libgl1-mesa-dri libglx-mesa0 libegl-mesa0 >/dev/null
+    # HOSTILE_QT=1: a host that has its own, different Qt plugins - the usual desktop - which
+    # a bundled Qt must not load (this crashed OBS in QIcon via the host's libqsvgicon.so).
+    [ -n "${HOSTILE_QT:-}" ] && apt-get install -y -qq --no-install-recommends libqt6svg6 >/dev/null
     ;;
 *fedora* | *rhel*)
     dnf install -y -q --setopt=install_weak_deps=False --setopt=keepcache=1 \
@@ -42,7 +45,10 @@ esac
 echo "::endgroup::"
 
 # Make sure the container really does lack what the AppImage must bring along.
-for lib in libQt6Core.so.6 libavcodec.so libobs.so.30 libx264.so; do
+# (With HOSTILE_QT the host deliberately has its own Qt, to prove the bundle ignores it.)
+absent="libavcodec.so libobs.so.30 libx264.so"
+[ -z "${HOSTILE_QT:-}" ] && absent="libQt6Core.so.6 $absent"
+for lib in $absent; do
     if ldconfig -p | grep -q "$lib"; then
         echo "::error::test container unexpectedly provides $lib"
         exit 1
@@ -113,6 +119,17 @@ if [ -n "$OBS_PID" ]; then
     echo "Libraries mapped from outside the AppImage:"
     grep -o '/[^ ]*\.so[^ ]*' "/proc/$OBS_PID/maps" | sort -u | grep -v "$APPDIR" | grep -v '/tmp/.obs-rust-appimage-' || true
     MISSING=0
+    # No Qt plugin may come from the host, and the SVG ones must come from the bundle.
+    if grep -o '/[^ ]*qt6/plugins/[^ ]*' "/proc/$OBS_PID/maps" | grep -v "$APPDIR" | grep .; then
+        echo "::error::Qt plugins above were loaded from outside the AppImage"
+        MISSING=1
+    fi
+    for plug in libqsvgicon.so libqsvg.so; do
+        if ! grep -o '/[^ ]*' "/proc/$OBS_PID/maps" | grep "/$plug" | grep -q "$APPDIR"; then
+            echo "::error::$plug was not loaded from inside the AppImage (OBS icons are SVG)"
+            MISSING=1
+        fi
+    done
     for lib in libc.so.6 libstdc++.so.6 libQt6Core.so libQt6Widgets.so libavcodec.so libobs.so libX11.so libxcb.so; do
         if ! grep -o '/[^ ]*' "/proc/$OBS_PID/maps" | grep "/$lib" | grep -q "$APPDIR"; then
             echo "::error::$lib was not loaded from inside the AppImage"
