@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - 'claude/**' # TEMPORARY: remove before finishing
     tags:
       - '*'
     paths-ignore:

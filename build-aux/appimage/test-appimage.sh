@@ -26,12 +26,12 @@ case "${ID_LIKE:-} ${ID}" in
         >/etc/apt/apt.conf.d/99keep
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends \
-        ca-certificates xvfb icewm x11-utils imagemagick fonts-dejavu-core gdb procps \
+        ca-certificates xvfb icewm x11-utils imagemagick fonts-dejavu-core gdb procps dbus \
         libgl1-mesa-dri libglx-mesa0 libegl-mesa0 >/dev/null
     ;;
 *fedora* | *rhel*)
     dnf install -y -q --setopt=install_weak_deps=False --setopt=keepcache=1 \
-        xorg-x11-server-Xvfb icewm xwininfo ImageMagick \
+        xorg-x11-server-Xvfb icewm xwininfo ImageMagick dbus-daemon \
         dejavu-sans-fonts gdb procps-ng mesa-dri-drivers mesa-libGL mesa-libEGL >/dev/null
     ;;
 *)
@@ -76,10 +76,13 @@ export HOME="$PWD/home"
 mkdir -p "$HOME/.config/obs-studio" # OBS only creates one directory level at a time
 export QT_QPA_PLATFORM=xcb
 export QT_ACCESSIBILITY=0
-export DBUS_SESSION_BUS_ADDRESS=disabled:
+# Behave like a real desktop session: a session bus, and an LD_LIBRARY_PATH full of host
+# libraries (GNUstep/Nix/vendor-driver sessions export one). The AppImage must not let
+# either one change which libraries it uses or crash the programs it spawns.
+HOSTILE_LD=/usr/lib:/usr/lib64:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu
 export LIBGL_ALWAYS_SOFTWARE=1 # no GPU in CI; Mesa llvmpipe from the host stands in for the driver
 
-"$APPDIR/AppRun" --disable-shutdown-check --verbose >"$OUT/obs-stdout.log" 2>&1 &
+LD_LIBRARY_PATH="$HOSTILE_LD" dbus-run-session -- "$APPDIR/AppRun" --disable-shutdown-check --verbose >"$OUT/obs-stdout.log" 2>&1 &
 APP_PID=$!
 
 WINDOW_FOUND=0
@@ -104,13 +107,14 @@ done
 
 echo "::group::Diagnostics"
 xwininfo -tree -root 2>&1 | head -40 || true
-if kill -0 "$APP_PID" 2>/dev/null; then
+OBS_PID="$(pgrep -x obs | head -1 || true)" # APP_PID is only the dbus-run-session wrapper
+if [ -n "$OBS_PID" ]; then
     # Libraries actually mapped into the running process: the core stack must be bundled.
     echo "Libraries mapped from outside the AppImage:"
-    grep -o '/[^ ]*\.so[^ ]*' "/proc/$APP_PID/maps" | sort -u | grep -v "$APPDIR" | grep -v '/tmp/.obs-rust-appimage-' || true
+    grep -o '/[^ ]*\.so[^ ]*' "/proc/$OBS_PID/maps" | sort -u | grep -v "$APPDIR" | grep -v '/tmp/.obs-rust-appimage-' || true
     MISSING=0
     for lib in libc.so.6 libstdc++.so.6 libQt6Core.so libQt6Widgets.so libavcodec.so libobs.so libX11.so libxcb.so; do
-        if ! grep -o '/[^ ]*' "/proc/$APP_PID/maps" | grep "/$lib" | grep -q "$APPDIR"; then
+        if ! grep -o '/[^ ]*' "/proc/$OBS_PID/maps" | grep "/$lib" | grep -q "$APPDIR"; then
             echo "::error::$lib was not loaded from inside the AppImage"
             MISSING=1
         fi

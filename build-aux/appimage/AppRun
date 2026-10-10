@@ -39,7 +39,9 @@ if ! same_loader || [ "$writable" = 1 ] || { [ "$owner" != "$(id -u)" ] && [ "$o
 fi
 
 export APPDIR="$HERE"
-export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# Deliberately NO LD_LIBRARY_PATH: every bundled ELF carries a relative RPATH
+# (set-runpaths.sh). An exported LD_LIBRARY_PATH would leak into every process
+# OBS spawns, and host programs crash when they pick up the bundled glibc.
 export QT_PLUGIN_PATH="$HERE/usr/lib/qt6/plugins"
 export QT_QPA_PLATFORM_PLUGIN_PATH="$HERE/usr/lib/qt6/plugins/platforms"
 export GCONV_PATH="$HERE/usr/lib/gconv"
@@ -54,7 +56,26 @@ if [ -z "$SSL_CERT_FILE" ]; then
         [ -r "$f" ] && { export SSL_CERT_FILE="$f"; break; }
     done
 fi
-# The host's Qt/GTK platform theme plugins are linked against the host's Qt.
-unset QT_QPA_PLATFORMTHEME
+# Never let the host inject modules built against its own (different) Qt/GLib:
+# usr/bin/qt.conf pins Qt's plugin search to the bundle, and GIO/GSettings
+# modules (dconf, gvfs, ...) are loaded from an empty bundled directory only.
+unset QT_QPA_PLATFORMTHEME QT_STYLE_OVERRIDE QT_IM_MODULE QT_QPA_PLATFORM_PLUGIN_PATH_HOST
+export GIO_MODULE_DIR="$HERE/usr/lib/gio/modules"
+export GIO_USE_VFS=local
+export GSETTINGS_BACKEND=memory
+
+if [ -n "$OBS_APPIMAGE_DEBUG" ]; then
+    # Troubleshooting: OBS_APPIMAGE_DEBUG=1 ./OBS_Studio-*.AppImage
+    # prints the environment and, when gdb is installed, a backtrace of a crash.
+    echo "== AppImage environment ==" >&2
+    env | sort | grep -E '^(APPDIR|LD_|QT_|GIO_|GSETTINGS_|XDG_|WAYLAND|DISPLAY|DBUS|LANG|LC_)' >&2
+    export QT_DEBUG_PLUGINS=1 LIBGL_DEBUG=verbose EGL_LOG_LEVEL=debug
+    if command -v gdb >/dev/null 2>&1; then
+        exec gdb -q -batch -ex 'set pagination off' -ex 'handle SIGPIPE nostop noprint' -ex run \
+            -ex 'echo \n== backtrace ==\n' -ex bt -ex 'thread apply all bt 30' \
+            --args "$HERE/usr/bin/obs" "$@"
+    fi
+    echo "gdb not found; install it to get a backtrace" >&2
+fi
 
 exec "$HERE/usr/bin/obs" "$@"

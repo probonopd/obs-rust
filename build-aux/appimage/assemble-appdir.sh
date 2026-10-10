@@ -25,6 +25,11 @@ for d in platforms platforminputcontexts imageformats iconengines tls xcbglinteg
     [ -d "$QT_PLUGINS/$d" ] && cp -a "$QT_PLUGINS/$d" "$LIBDIR/qt6/plugins/"
 done
 
+# Qt must only ever look at the bundled plugins (see AppRun).
+printf '[Paths]\nPrefix = ..\nPlugins = lib/qt6/plugins\n' >"$APPDIR/usr/bin/qt.conf"
+# Empty on purpose: GIO modules from the host are linked against the host's GLib.
+mkdir -p "$LIBDIR/gio/modules"
+
 # --- dlopen()ed runtime pieces that ldd cannot see ---------------------------
 mkdir -p "$LIBDIR/gconv"
 cp -a "$SYSLIB"/gconv/. "$LIBDIR/gconv/"
@@ -82,6 +87,10 @@ find "$APPDIR/usr" -type f -perm -u+x ! -name '*.so' ! -name '*.so.*' | while re
     patchelf --set-interpreter "$LOADER" "$f"
     echo "interpreter patched: ${f#"$APPDIR"/}"
 done
+
+# --- relative RPATHs instead of an exported LD_LIBRARY_PATH (see set-runpaths.sh) ---
+unset LD_LIBRARY_PATH # patchelf and friends are host programs
+"$HERE/set-runpaths.sh" "$APPDIR"
 
 # --- desktop integration -----------------------------------------------------
 sed "s|@LOADER@|$LOADER|" "$HERE/AppRun" >"$APPDIR/AppRun"
