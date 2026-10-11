@@ -40,6 +40,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          fetch-depth: 0 # `git describe` needs the release tags to derive the OBS version
           persist-credentials: false
 
       # Caches are restored on every run and saved even when a later step fails, so a
@@ -103,9 +104,11 @@ jobs:
 
       - name: Determine version 🏷️
         run: |
-          # OBS's CMake wants MAJOR.MINOR.PATCH; forks often have no tags at all.
-          if [[ "${GITHUB_REF_TYPE}" == tag && "${GITHUB_REF_NAME#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo "OBS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          # Use the real version when the checkout has release tags (upstream OBS does).
+          # Without them (forks, shallow clones) `git describe` yields a bare commit hash,
+          # which CMake rejects as a project VERSION, so fall back to a valid dev version.
+          if desc="$(git describe --tags 2>/dev/null)" && [[ "$desc" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "OBS_VERSION=$desc" >> "$GITHUB_ENV"
           else
             echo "OBS_VERSION=0.0.0-g${GITHUB_SHA::9}" >> "$GITHUB_ENV"
           fi
@@ -115,6 +118,8 @@ jobs:
           RUST_LIBOBS: ${{ github.event_name != 'workflow_dispatch' || inputs.rust_libobs }}
           QSV: ${{ github.event_name == 'workflow_dispatch' && inputs.qsv }}
         run: |
+          # The Rust libobs port only exists in obs-rust; plain OBS has no such option or workspace.
+          [ -f Cargo.toml ] || RUST_LIBOBS=false
           cmake --preset ubuntu-ci \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
