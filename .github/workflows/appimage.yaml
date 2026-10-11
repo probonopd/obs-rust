@@ -9,6 +9,7 @@ on:
   push:
     branches:
       - master
+      - infra/appimage-releases # TEMP
     tags:
       - '*'
     paths-ignore:
@@ -198,7 +199,7 @@ jobs:
           # so it carries update information: AppImageUpdate and friends can then
           # fetch the next continuous build as a delta against this one (.zsync).
           update=()
-          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/master ]; then
+          if [ "$GITHUB_EVENT_NAME" = push ] && { [ "$GITHUB_REF" = refs/heads/master ] || [ "$GITHUB_REF" = refs/heads/infra/appimage-releases ]; }; then # TEMP
             update=(-u "gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}|continuous|OBS_Studio-*-x86_64.AppImage.zsync")
           fi
           ARCH=x86_64 squashfs-root/AppRun --no-appstream "${update[@]}" AppDir "OBS_Studio-${OBS_VERSION}-x86_64.AppImage"
@@ -287,7 +288,7 @@ jobs:
           name: obs-studio-appimage
 
       - name: Publish the continuous build 🔄
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/infra/appimage-releases' # TEMP
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
